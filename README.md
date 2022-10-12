@@ -289,3 +289,113 @@ base. 을 사용하자!
 
 자신은 부모의 것을 override하여 사용하지만, 나의 자식은 override하는 걸 막겠다?  
 override 앞에 sealed를 붙여주자.
+
+
+# [골든벨] 서버 통신 공부(2022.10.10)
+
+## Lobby System
+
+Unity Netcode 를 활용한 예제 프로그램 ‘Boss Room’의 가이드 참고
+
+[Lobby Creation | Unity Multiplayer Networking](https://docs-multiplayer.unity3d.com/netcode/0.1.0/learn/dapper/lobbycreation/index.html)
+
+## 관련 코드 정리
+
+```csharp
+IEnumerator WaitToEndLobby()
+        {
+            yield return new WaitForSeconds(3);
+            SceneLoaderWrapper.Instance.LoadScene("BossRoom", useNetworkSceneManager: true);
+        }
+```
+
+```csharp
+/// <summary>
+        /// Loads a scene asynchronously using the specified loadSceneMode, with NetworkSceneManager if on a listening
+        /// server with SceneManagement enabled, or SceneManager otherwise. If a scene is loaded via SceneManager, this
+        /// method also triggers the start of the loading screen.
+        /// </summary>
+        /// <param name="sceneName">Name or path of the Scene to load.</param>
+        /// <param name="useNetworkSceneManager">If true, uses NetworkSceneManager, else uses SceneManager</param>
+        /// <param name="loadSceneMode">If LoadSceneMode.Single then all current Scenes will be unloaded before loading.</param>
+        public void LoadScene(string sceneName, bool useNetworkSceneManager, LoadSceneMode loadSceneMode = LoadSceneMode.Single)
+        {
+            if (useNetworkSceneManager)
+            {
+                if (IsSpawned && IsNetworkSceneManagementEnabled && !NetworkManager.ShutdownInProgress)
+                {
+                    if (NetworkManager.IsServer)
+                    {
+                        // If is active server and NetworkManager uses scene management, load scene using NetworkManager's SceneManager
+                        NetworkManager.SceneManager.LoadScene(sceneName, loadSceneMode);
+                    }
+                }
+            }
+            else
+            {
+                // Load using SceneManager
+                var loadOperation = SceneManager.LoadSceneAsync(sceneName, loadSceneMode);
+                if (loadSceneMode == LoadSceneMode.Single)
+                {
+                    m_ClientLoadingScreen.StartLoadingScreen(sceneName);
+                    m_LoadingProgressManager.LocalLoadOperation = loadOperation;
+                }
+            }
+        }
+```
+
+Scene → Scene 
+
+서버에서 일괄적으로 해당 씬에 있는 유저들 이동
+
+```csharp
+//Lobby and Relay calls done from UI
+
+        public async void CreateLobbyRequest(string lobbyName, bool isPrivate, int maxPlayers)
+        {
+            // before sending request to lobby service, populate an empty lobby name, if necessary
+            if (string.IsNullOrEmpty(lobbyName))
+            {
+                lobbyName = k_DefaultLobbyName;
+            }
+
+            BlockUIWhileLoadingIsInProgress();
+
+            bool playerIsAuthorized = await m_AuthenticationServiceFacade.EnsurePlayerIsAuthorized();
+
+            if (!playerIsAuthorized)
+            {
+                UnblockUIAfterLoadingIsComplete();
+                return;
+            }
+
+            var lobbyCreationAttempt = await m_LobbyServiceFacade.TryCreateLobbyAsync(lobbyName, maxPlayers, isPrivate);
+
+            if (lobbyCreationAttempt.Success)
+            {
+                m_LocalUser.IsHost = true;
+                m_LobbyServiceFacade.SetRemoteLobby(lobbyCreationAttempt.Lobby);
+
+                m_GameNetPortal.PlayerName = m_LocalUser.DisplayName;
+
+                Debug.Log($"Created lobby with ID: {m_LocalLobby.LobbyID} and code {m_LocalLobby.LobbyCode}, Internal Relay Join Code{m_LocalLobby.RelayJoinCode}");
+                m_GameNetPortal.StartUnityRelayHost();
+            }
+            else
+            {
+                UnblockUIAfterLoadingIsComplete();
+            }
+        }
+```
+
+[https://www.youtube.com/watch?v=RtBf4v0LjHU](https://www.youtube.com/watch?v=RtBf4v0LjHU)
+
+## Lobby 구현을 위해 필요한 것.
+
+1. 유저의 준비상태(READY 등)를 담을 수 있는 Network Variable
+2. Session Scene
+3. NetworkManager.SceneManager.LoadScnene
+
+현재 예제로 구성되어 있는 스크립트가 Netcode 구버전으로 지금 버전과 호환되지 않은 부분이 있어 구현에 있어 어려움을 겪는중.
+
+또한 모바일 환경에서 Host 를 운용하려면 유저가 서버가 되어야하는데, 이를 구현함에 있어서 포트포워딩 등 어려움이 있어 목표 구현인 데모버전에서는 하나의 서버가 일괄된 처리를 할 예정이므로 예제와 다른 구현방법이 필요할것으로 예상.
